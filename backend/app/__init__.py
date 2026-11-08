@@ -1,0 +1,1 @@
+"""VerityAI backend application package."""

@@ -1,0 +1,33 @@
+# Python environments and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp/
+pytest-cache-files-*/
+**/pytest-cache-files-*/
+test-m3-tmp/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+.coverage
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+.secrets/
+
+# Frontend dependencies and builds
+node_modules/
+frontend/dist/
+npm-debug.log*
+
+# Local uploads and runtime artifacts
+uploads/
+/var/knowledge-documents/
+*.log
