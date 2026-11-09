@@ -191,6 +191,11 @@ export type EvidenceUploadPayload = {
 };
 
 const env = (import.meta as ImportMeta & { env: Record<string, string | undefined> }).env;
+const apiBaseUrl = (env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
+
+function apiUrl(path: string): string {
+  return `${apiBaseUrl}${path}`;
+}
 
 export const demoTenant = {
   organizationId: env.VITE_ORGANIZATION_ID ?? '',
@@ -230,7 +235,7 @@ function identityHeaders(): Record<string, string> {
 
 async function requestJson<TResponse>(path: string, method: 'GET' | 'POST', body?: unknown): Promise<TResponse> {
 
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     method,
     credentials: 'same-origin',
     headers: tenantHeaders(),
@@ -274,7 +279,7 @@ export function createSubmission(submittedText: string): Promise<SubmissionResul
 export async function createDocumentSubmission(file: File): Promise<SubmissionResult> {
   const form = new FormData();
   form.append('file', file);
-  const response = await fetch(`${tenantPath()}/submissions/documents`, {
+  const response = await fetch(apiUrl(`${tenantPath()}/submissions/documents`), {
     method: 'POST',
     credentials: 'same-origin',
     headers: identityHeaders(),
@@ -352,7 +357,7 @@ export async function uploadEvidence(payload: EvidenceUploadPayload): Promise<Ev
   form.append('title', payload.title);
   if (payload.valid_from) form.append('valid_from', payload.valid_from);
   if (payload.valid_until) form.append('valid_until', payload.valid_until);
-  const response = await fetch(`${tenantPath()}/evidence`, {
+  const response = await fetch(apiUrl(`${tenantPath()}/evidence`), {
     method: 'POST',
     credentials: 'same-origin',
     headers: identityHeaders(),

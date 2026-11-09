@@ -30,4 +30,5 @@ npm-debug.log*
 # Local uploads and runtime artifacts
 uploads/
 /var/knowledge-documents/
+/backend/var/knowledge-documents/
 *.log

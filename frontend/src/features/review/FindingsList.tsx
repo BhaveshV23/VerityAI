@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import {
   ApiError,
   recordFindingDisposition,
@@ -119,9 +120,13 @@ export default function FindingsList({
                 <p className="finding-attention">Original attention label: {finding.attention_label ?? 'not assigned'}</p>
                 {(finding.evidence_version_id || finding.policy_version_id) && (
                   <div className="finding-links" aria-label="Related records">
-                    {finding.evidence_version_id && (
-                      <a href={`#evidence-${finding.evidence_version_id}`}>Evidence · {finding.evidence_version_id.slice(0, 8)}</a>
-                    )}
+                    {finding.evidence_version_id && (finding.evidence_record_id ? (
+                        <Link to={`/evidence?selected=${encodeURIComponent(finding.evidence_record_id)}`}>
+                          Evidence · {finding.evidence_version_id.slice(0, 8)}
+                        </Link>
+                      ) : (
+                        <span className="finding-reference">Evidence · {finding.evidence_version_id.slice(0, 8)}</span>
+                      ))}
                     {finding.policy_version_id && (
                       <a href={`#policy-${finding.policy_version_id}`}>Policy · {finding.policy_version_id.slice(0, 8)}</a>
                     )}

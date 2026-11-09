@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ApiError, createDocumentSubmission, createSubmission, demoTenant } from '../../api/client';
+import Navbar from '../../components/Navbar';
 
 type SourceMode = 'text' | 'document';
 
@@ -39,16 +40,7 @@ export default function SubmissionForm() {
 
   return (
     <main className="page-shell intake-page">
-      <header className="topbar">
-        <Link className="brand" to="/" aria-label="VerityAI home">
-          <span className="brand-mark">V</span>
-          <span>VerityAI</span>
-        </Link>
-        <nav className="topbar-nav" aria-label="Primary navigation">
-          <Link to="/evidence">Evidence Repository</Link>
-          <Link to="/governance">Governance insights</Link>
-        </nav>
-      </header>
+      <Navbar />
 
       <section className="intake-content">
         <div className="page-heading">
@@ -105,10 +97,6 @@ export default function SubmissionForm() {
           )}
         </form>
 
-        <div className="privacy-note">
-          <span aria-hidden="true">▣</span>
-          <p>Your content is submitted to your configured workspace. Analysis shown here is produced by the local demo pipeline.</p>
-        </div>
         {(!demoTenant.organizationId || !demoTenant.workspaceId) && (
           <p className="setup-note">
             Add <code>VITE_ORGANIZATION_ID</code> and <code>VITE_WORKSPACE_ID</code> to <code>frontend/.env.local</code>, then restart Vite. Add <code>VITE_USER_ID</code> when using a specific development member.

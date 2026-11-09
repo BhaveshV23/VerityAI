@@ -5,6 +5,7 @@ import type { AnalysisFinding, AnalysisStageResult, ReviewEligibility } from '..
 import DocumentViewer from './DocumentViewer';
 import DecisionPanel from './DecisionPanel';
 import FindingsList from './FindingsList';
+import Navbar from '../../components/Navbar';
 
 type ReviewLocationState = {
   submittedText?: string;
@@ -76,25 +77,18 @@ export default function ReviewWorkspace() {
 
   return (
     <main className="page-shell review-page">
-      <header className="topbar">
-        <Link className="brand" to="/" aria-label="VerityAI home">
-          <span className="brand-mark">V</span>
-          <span>VerityAI</span>
-        </Link>
-        <div className="review-meta">
-          <Link className="text-link" to="/evidence">Evidence</Link>
-          <Link className="text-link" to="/governance">Governance</Link>
-          <span className="review-status"><span className="status-dot" />In review</span>
-          <span>Version {versionId.slice(0, 8) || '—'}</span>
-        </div>
-      </header>
+      <Navbar />
 
       <div className="review-title-row">
         <div>
           <p className="eyebrow">Submission {submissionId.slice(0, 8) || '—'}</p>
           <h1>Review workspace</h1>
         </div>
-        <Link className="text-link" to="/">← Back to intake</Link>
+        <div className="review-meta">
+          <span className="review-status"><span className="status-dot" />In review</span>
+          <span>Version {versionId.slice(0, 8) || '—'}</span>
+          <Link className="text-link" to="/">← Back to intake</Link>
+        </div>
       </div>
 
       {extractionStatus && extractionStatus !== 'Not required' && (

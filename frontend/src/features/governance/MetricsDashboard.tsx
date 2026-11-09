@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError, getGovernanceMetrics } from '../../api/client';
 import type { GovernanceMetrics } from '../../api/client';
+import Navbar from '../../components/Navbar';
 
 function MetricValue({ value }: { value: number }) {
   return <strong className="metric-value">{value.toLocaleString()}</strong>;
@@ -25,24 +26,18 @@ export default function MetricsDashboard() {
 
   return (
     <main className="page-shell governance-page">
-      <header className="topbar">
-        <Link className="brand" to="/" aria-label="VerityAI home">
-          <span className="brand-mark">V</span>
-          <span>VerityAI</span>
-        </Link>
-        <nav className="topbar-nav evidence-nav" aria-label="Primary navigation">
-          <Link to="/">Intake</Link><Link to="/evidence">Evidence Repository</Link>
-        </nav>
-        <Link className="text-link" to="/">← Back to intake</Link>
-      </header>
+      <Navbar />
 
       <div className="governance-heading">
         <div>
           <p className="eyebrow">Workspace overview</p>
-          <h1>Governance insights</h1>
+          <h1>Governance Insights</h1>
           <p className="lead">A snapshot of submissions, review activity, and evidence requiring attention.</p>
         </div>
-        <span className="period-label">Data from the last 30 days</span>
+        <div className="governance-heading-actions">
+          <span className="period-label">Data from the last 30 days</span>
+          <Link className="text-link" to="/">← Back to intake</Link>
+        </div>
       </div>
 
       {isLoading ? (

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import {
   ApiError,
   approveEvidence,
@@ -12,6 +12,7 @@ import {
   uploadEvidence,
 } from '../../api/client';
 import type { EvidenceHistory, EvidenceItem } from '../../api/client';
+import Navbar from '../../components/Navbar';
 
 function validityLabel(item: EvidenceItem) {
   if (item.freshness_unknown) {
@@ -39,6 +40,9 @@ export default function EvidenceManager() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showUpload, setShowUpload] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedEvidenceId = searchParams.get('selected');
+  const detailsPanelRef = useRef<HTMLElement | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -98,6 +102,16 @@ export default function EvidenceManager() {
     }
   }
 
+  useEffect(() => {
+    if (requestedEvidenceId) void openHistory(requestedEvidenceId);
+  }, [requestedEvidenceId]);
+
+  useEffect(() => {
+    if (selected && requestedEvidenceId) {
+      detailsPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [selected, requestedEvidenceId]);
+
   async function performAction(action: () => Promise<EvidenceItem>, message: string) {
     if (!selected) return;
     setActing(true);
@@ -131,12 +145,7 @@ export default function EvidenceManager() {
 
   return (
     <main className="page-shell governance-page">
-      <header className="topbar">
-        <Link className="brand" to="/" aria-label="VerityAI home"><span className="brand-mark">V</span><span>VerityAI</span></Link>
-        <nav className="topbar-nav evidence-nav" aria-label="Primary navigation">
-          <Link to="/">Intake</Link><Link to="/evidence" aria-current="page">Evidence Repository</Link><Link to="/governance">Governance insights</Link>
-        </nav>
-      </header>
+      <Navbar />
 
       <div className="governance-heading">
         <div><p className="eyebrow">Workspace sources</p><h1>Evidence repository</h1><p className="lead">Manage the documents reviewers can use as approved support.</p></div>
@@ -186,10 +195,19 @@ export default function EvidenceManager() {
       ) : <div className="dashboard-state">No evidence has been uploaded to this workspace yet.</div>}
 
       {selected && (
-        <section className="panel evidence-history" aria-labelledby="evidence-history-title">
+        <section ref={detailsPanelRef} className="panel evidence-history" aria-labelledby="evidence-history-title">
           <div className="panel-heading">
             <div><p className="eyebrow">Evidence governance</p><h2 id="evidence-history-title">{selected.evidence.title} · Version {selected.evidence.version_number}</h2></div>
-            <button className="button button-secondary" type="button" onClick={() => setSelected(null)}>Close details</button>
+            <button className="button button-secondary" type="button" onClick={() => {
+              setSelected(null);
+              if (requestedEvidenceId) {
+                setSearchParams((current) => {
+                  const next = new URLSearchParams(current);
+                  next.delete('selected');
+                  return next;
+                }, { replace: true });
+              }
+            }}>Close details</button>
           </div>
           <p>Primary lifecycle: <strong>{selected.evidence.primary_lifecycle_state}</strong>. Validity: {validityLabel(selected.evidence)}.</p>
           {selected.evidence.pending_reapproval && <p className="decision-warning">This exact version is pending explicit re-approval and is not eligible as support.</p>}
