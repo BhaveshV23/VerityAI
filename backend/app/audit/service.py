@@ -24,6 +24,9 @@ from app.models import (
     HumanDisposition,
     MembershipRoleAssignment,
     Organization,
+    PaymentTransaction,
+    Report,
+    ReportEntitlement,
     Policy,
     PolicyVersion,
     ReviewDecision,
@@ -66,6 +69,9 @@ _TENANT_TARGETS = {
     "generated_suggestion": GeneratedSuggestion,
     "human_disposition": HumanDisposition,
     "review_decision": ReviewDecision,
+    "report": Report,
+    "payment_transaction": PaymentTransaction,
+    "report_entitlement": ReportEntitlement,
     "knowledge_document": KnowledgeDocument,
 }
 

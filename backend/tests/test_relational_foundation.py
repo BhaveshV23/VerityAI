@@ -45,7 +45,7 @@ def test_fresh_migration_contains_expected_relational_tables(engine):
         "knowledge_document_chunks",
     } <= tables
     with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "a83f0d5c1b72"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "7ad3a10c8421"
 
 
 def test_repository_reads_are_limited_to_explicit_tenant_scope(session_factory, tenant_pair):

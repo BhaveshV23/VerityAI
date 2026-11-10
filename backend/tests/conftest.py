@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import EvidenceRecord, Organization, Policy, Submission, User, Workspace, WorkspaceMembership
@@ -26,11 +27,13 @@ class SyntheticTenant:
 
 @pytest.fixture(scope="session")
 def database_url() -> str:
-    url = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
+    url = os.getenv("TEST_DATABASE_URL")
     if not url:
-        pytest.fail("Set TEST_DATABASE_URL to a migrated PostgreSQL database")
+        pytest.fail("Set TEST_DATABASE_URL to the dedicated verityai_test PostgreSQL database")
     if not url.startswith("postgresql"):
-        pytest.fail("Milestone 2 integration tests require PostgreSQL")
+        pytest.fail("Backend integration tests require PostgreSQL")
+    if (make_url(url).database or "").casefold() != "verityai_test":
+        pytest.fail("Database-backed tests are restricted to a database named verityai_test")
     return url
 
 

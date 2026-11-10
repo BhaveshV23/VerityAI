@@ -96,7 +96,7 @@ def test_document_submission_persists_original_version_extraction_and_pipeline(
     storage_root = tmp_path / "private-documents"
     monkeypatch.setenv("DOCUMENT_STORAGE_PATH", str(storage_root))
     monkeypatch.setenv("DOCUMENT_MAX_UPLOAD_BYTES", "1000000")
-    monkeypatch.setenv("AI_ENABLED", "false")
+    monkeypatch.setenv("AI_PROVIDER", "deterministic")
     app = _app(session_factory, _scope(tenant))
 
     with TestClient(app) as client:

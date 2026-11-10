@@ -7,6 +7,7 @@ authentication or feature workflows.
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -20,6 +21,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -84,6 +86,7 @@ class WorkspaceMembership(Base):
     __table_args__ = (
         UniqueConstraint("id", "organization_id", "workspace_id", name="uq_memberships_id_tenant"),
         UniqueConstraint("id", "organization_id", name="uq_memberships_id_org"),
+        UniqueConstraint("id", "user_id", "organization_id", "workspace_id", name="uq_memberships_user_tenant_ref"),
         UniqueConstraint("organization_id", "workspace_id", "user_id", name="uq_memberships_scope_user"),
         ForeignKeyConstraint(
             ["workspace_id", "organization_id"],
@@ -700,6 +703,174 @@ class AuditEvent(Base):
     target_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     safe_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = timestamp_column()
+
+
+class Report(Base):
+    """Immutable report snapshot tied to one exact submission version and run."""
+
+    __tablename__ = "reports"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", "workspace_id", name="uq_reports_id_tenant"),
+        UniqueConstraint(
+            "id", "submission_version_id", "analysis_run_id", "organization_id", "workspace_id",
+            name="uq_reports_analysis_ref",
+        ),
+        UniqueConstraint(
+            "submission_version_id", "analysis_run_id", name="uq_reports_version_analysis_run"
+        ),
+        ForeignKeyConstraint(
+            ["submission_version_id", "organization_id", "workspace_id"],
+            ["submission_versions.id", "submission_versions.organization_id", "submission_versions.workspace_id"],
+            name="fk_report_version",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["analysis_run_id", "submission_version_id", "organization_id", "workspace_id"],
+            ["analysis_runs.id", "analysis_runs.submission_version_id", "analysis_runs.organization_id", "analysis_runs.workspace_id"],
+            name="fk_report_analysis_run",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("report_version > 0", name="positive_report_version"),
+        Index("ix_reports_tenant_generated", "organization_id", "workspace_id", "generated_at"),
+    )
+
+    id: Mapped[UUID] = uuid_column()
+    organization_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    workspace_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    submission_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    analysis_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    report_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    content_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    generated_at: Mapped[datetime] = timestamp_column()
+    created_at: Mapped[datetime] = timestamp_column()
+
+
+class PaymentTransaction(Base):
+    """One server-priced PayPal Sandbox purchase attempt for a report."""
+
+    __tablename__ = "payment_transactions"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", "workspace_id", name="uq_payment_transactions_id_tenant"),
+        UniqueConstraint(
+            "id", "report_id", "organization_id", "workspace_id", "purchaser_user_id",
+            name="uq_payment_transactions_entitlement_ref",
+        ),
+        UniqueConstraint("paypal_order_id", name="uq_payment_transactions_paypal_order"),
+        UniqueConstraint("paypal_capture_id", name="uq_payment_transactions_paypal_capture"),
+        UniqueConstraint(
+            "organization_id", "workspace_id", "purchaser_user_id", "idempotency_key",
+            name="uq_payment_transactions_idempotency",
+        ),
+        ForeignKeyConstraint(
+            ["report_id", "organization_id", "workspace_id"],
+            ["reports.id", "reports.organization_id", "reports.workspace_id"],
+            name="fk_pay_tx_report",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["purchaser_membership_id", "purchaser_user_id", "organization_id", "workspace_id"],
+            ["workspace_memberships.id", "workspace_memberships.user_id", "workspace_memberships.organization_id", "workspace_memberships.workspace_id"],
+            name="fk_pay_tx_purchaser_membership",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["purchaser_user_id"], ["users.id"], name="fk_pay_tx_purchaser_user", ondelete="RESTRICT"
+        ),
+        CheckConstraint("provider = 'paypal_sandbox'", name="valid_provider"),
+        CheckConstraint("status IN ('pending', 'provider_approved', 'capture_verified', 'failed', 'cancelled')", name="valid_status"),
+        CheckConstraint("expected_amount > 0", name="positive_expected_amount"),
+        CheckConstraint("currency = 'USD'", name="supported_currency"),
+        CheckConstraint(
+            "status != 'capture_verified' OR (paypal_order_id IS NOT NULL AND paypal_capture_id IS NOT NULL AND captured_at IS NOT NULL AND verified_at IS NOT NULL)",
+            name="verified_capture_has_provider_reference",
+        ),
+        Index(
+            "uq_payment_transactions_active_report_user",
+            "report_id", "purchaser_user_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'provider_approved')"),
+        ),
+        Index("ix_payment_transactions_tenant_report", "organization_id", "workspace_id", "report_id"),
+    )
+
+    id: Mapped[UUID] = uuid_column()
+    organization_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    workspace_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    report_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    purchaser_user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    purchaser_membership_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False, server_default="paypal_sandbox")
+    paypal_order_id: Mapped[str | None] = mapped_column(String(128))
+    paypal_capture_id: Mapped[str | None] = mapped_column(String(128))
+    expected_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="USD")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="pending")
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = timestamp_column()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ReportEntitlement(Base):
+    """Report access granted only after independently verified capture."""
+
+    __tablename__ = "report_entitlements"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", "workspace_id", name="uq_report_entitlements_id_tenant"),
+        UniqueConstraint("report_id", "purchaser_user_id", name="uq_report_entitlements_report_user"),
+        UniqueConstraint("payment_transaction_id", name="uq_report_entitlements_transaction"),
+        ForeignKeyConstraint(
+            ["report_id", "organization_id", "workspace_id"],
+            ["reports.id", "reports.organization_id", "reports.workspace_id"],
+            name="fk_entitlement_report",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["payment_transaction_id", "report_id", "organization_id", "workspace_id", "purchaser_user_id"],
+            ["payment_transactions.id", "payment_transactions.report_id", "payment_transactions.organization_id", "payment_transactions.workspace_id", "payment_transactions.purchaser_user_id"],
+            name="fk_entitlement_payment",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["purchaser_user_id"], ["users.id"], name="fk_entitlement_purchaser_user", ondelete="RESTRICT"
+        ),
+        CheckConstraint("status IN ('active', 'revoked')", name="valid_status"),
+        Index("ix_report_entitlements_tenant_user", "organization_id", "workspace_id", "purchaser_user_id"),
+    )
+
+    id: Mapped[UUID] = uuid_column()
+    organization_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    workspace_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    report_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    purchaser_user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    payment_transaction_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    granted_at: Mapped[datetime] = timestamp_column()
+
+
+class PayPalWebhookEvent(Base):
+    """Minimal webhook receipt record; no raw body or payment secrets are stored."""
+
+    __tablename__ = "paypal_webhook_events"
+    __table_args__ = (
+        UniqueConstraint("paypal_event_id", name="uq_paypal_webhook_events_event_id"),
+        CheckConstraint("processing_state IN ('received', 'processed', 'failed')", name="valid_processing_state"),
+        Index("ix_paypal_webhook_events_received", "received_at"),
+    )
+
+    id: Mapped[UUID] = uuid_column()
+    paypal_event_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    paypal_order_id: Mapped[str | None] = mapped_column(String(128))
+    paypal_capture_id: Mapped[str | None] = mapped_column(String(128))
+    signature_verified: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    processing_state: Mapped[str] = mapped_column(String(20), nullable=False, server_default="received")
+    received_at: Mapped[datetime] = timestamp_column()
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    safe_error_code: Mapped[str | None] = mapped_column(String(100))
 
 
 class KnowledgeDocument(Base):

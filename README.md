@@ -59,18 +59,26 @@ Apply all Alembic migrations from the repository root after PostgreSQL is runnin
 .\.venv\Scripts\alembic.exe -c backend\alembic.ini upgrade head
 ```
 
-Run the PostgreSQL-backed tests using the same local database URL (or set `TEST_DATABASE_URL` to a disposable PostgreSQL database):
+Run PostgreSQL-backed tests only after creating and migrating a dedicated database named `verityai_test`. The test fixture requires `TEST_DATABASE_URL` and rejects any database name other than `verityai_test`; it never falls back to `DATABASE_URL`.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
 .\.venv\Scripts\python.exe -m pytest -c backend\pytest.ini backend\tests -q
 ```
 
-The integration tests require a migrated PostgreSQL database and create synthetic rows inside rollback-isolated transactions. Do not point them at data that must be preserved.
+The integration tests require a migrated PostgreSQL database and create synthetic rows inside rollback-isolated transactions. Set `TEST_DATABASE_URL` in the current PowerShell process to the dedicated test database URL. For migration commands, temporarily set `DATABASE_URL` to that same test URL; never point tests or test migrations at the development database.
 
 ## Submission analysis behavior
 
-Creating a pasted-text or PDF/DOCX submission persists the immutable source/version first, then runs the four required analysis stages synchronously in the API process: claim extraction, evidence retrieval, policy evaluation, and finding composition. The response includes the submission ID, version ID, analysis run ID, and actual run status. For documents, extraction status is also returned and extracted text is retained as a derived artifact for the exact version and run. A failed required stage returns an `Incomplete` run with the failed stage and downstream stages recorded as `Not run`; the submitted source remains persisted for traceability. Analysis uses the deterministic local demo adapter and does not call an external AI provider.
+Creating a pasted-text or PDF/DOCX submission persists the immutable source/version first, then runs the four required analysis stages synchronously in the API process: claim extraction, evidence retrieval, policy evaluation, and finding composition. The response includes the submission ID, version ID, analysis run ID, and actual run status. For documents, extraction status is also returned and extracted text is retained as a derived artifact for the exact version and run. A failed required stage returns an `Incomplete` run with the failed stage and downstream stages recorded as `Not run`; the submitted source remains persisted for traceability. Claim extraction defaults to the deterministic local provider. When explicitly configured for Gemini, extracted text is sent to the Gemini API for structured claim extraction; all later verification stages remain local and deterministic.
+
+## Gemini claim extraction
+
+The default `AI_PROVIDER=deterministic` keeps local development and tests offline. To enable genuine Gemini claim extraction, create an API key in [Google AI Studio](https://aistudio.google.com/app/apikey) and place it in the ignored repository-root `.env` file. Set `AI_PROVIDER=gemini`, `GEMINI_API_KEY`, `GEMINI_MODEL` (defaults to `gemini-3.8-flash`), and optionally `GEMINI_TIMEOUT_SECONDS` (defaults to 30). Never put the key in `frontend/.env*` or commit it. Restart FastAPI after changing `.env`.
+
+In Gemini mode, the claim-extraction stage sends the submitted text (or the existing document extraction output) to Google. Use this mode only for synthetic/demo content or data you are authorized to transmit to that provider. A missing key, API error/timeout, invalid response, or claim not found verbatim in the source marks claim extraction failed; there is no deterministic fallback reported as Gemini success. The adapter validates the structured response and derives offsets from exact source substrings. Evidence retrieval, tenant/lifecycle filters, policy evaluation, and finding composition continue to use the existing implementation; Gemini does not approve evidence or decide payment status.
+
+The project venv setup from the repository root is `py -3 -m venv .venv` followed by `\.venv\Scripts\python.exe -m pip install -r backend\requirements.lock.txt -r backend\requirements-dev.txt`. Run focused, mocked Gemini tests without an API key using `\.venv\Scripts\python.exe -m pytest -c backend\pytest.ini backend\tests\test_ai_adapter.py -q`. Run the PostgreSQL-backed integration and regression tests with `\.venv\Scripts\python.exe -m pytest -c backend\pytest.ini backend\tests\test_analysis_orchestrator.py backend\tests\test_evidence_retrieval.py -q` after setting `TEST_DATABASE_URL` to a migrated PostgreSQL test database.
 
 ## PDF/DOCX submission intake
 
@@ -108,6 +116,12 @@ The implementation records audit events for successful review decisions in the s
 ## Evidence lifecycle
 
 The Evidence Repository supports the explicit `Uploaded` → `Reviewed` → `Approved` sequence, records each transition with its actor and time, and shows version and transition history. Validity edits create a new immutable evidence version; the new current version remains ineligible until explicitly re-approved. As confirmed for this implementation, superseded versions remain available to explain historical analyses and are not candidates in new analyses. Inactive is a separate condition that blocks eligibility and does not change the primary lifecycle. Only the existing `evidence.manage` permission is used; this change does not add role grants. The PRD leaves authority to clear Inactive and to create/resolve manual conflicts OPEN, so the UI does not offer those actions. Existing conflict records are visible in history and continue to block evidence eligibility while open.
+
+## Report foundation (Milestone 1)
+
+The backend can create an immutable, versioned report snapshot only for an exact submission version and analysis run whose overall state is `Succeeded` and whose required analysis stages all succeeded. Reviewer approval is not required; the review workflow remains independent. The snapshot preserves claims, composed findings, related evidence and policy version references, stage status, and explicit limitations. Contradictory-finding counts and calibrated confidence are not reported because the current analysis records do not provide those classifications or scores. A limited preview is projected from the stored snapshot and includes at most two finding summaries without evidence details.
+
+The server-owned fixed price defaults to `REPORT_PRICE_AMOUNT=5.00` and `REPORT_CURRENCY=USD`. The amount is parsed as `Decimal`, must be positive and limited to cents, and only USD is currently accepted. These settings do not enable payment: this milestone adds persistence and service boundaries only. No PayPal calls, checkout API, webhook listener, entitlement-gated report endpoint, or frontend checkout are enabled yet. Any future entitlement is user-scoped and must follow independently verified PayPal capture; a pending transaction or browser redirect cannot grant access.
 
 ## Synthetic Apex demo data
 

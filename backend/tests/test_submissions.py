@@ -124,7 +124,7 @@ def test_submission_api_runs_all_four_stages_and_returns_persisted_findings(
     session_factory, tenant_pair, monkeypatch
 ):
     tenant, _ = tenant_pair
-    monkeypatch.setenv("AI_ENABLED", "false")
+    monkeypatch.setenv("AI_PROVIDER", "deterministic")
     app = _submission_api(session_factory, _scope(tenant))
     with TestClient(app) as client:
         response = _post_submission(client, tenant)
