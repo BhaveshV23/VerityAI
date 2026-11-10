@@ -425,6 +425,7 @@ def test_only_matching_verified_capture_grants_one_idempotent_entitlement(sessio
             amount=Decimal("5.00"),
             currency="USD",
             provider_verified=True,
+            report_reference=str(report.id),
         )
         with pytest.raises(InvalidVerifiedPayment):
             record_verified_capture_and_grant_entitlement(
@@ -446,10 +447,18 @@ def test_only_matching_verified_capture_grants_one_idempotent_entitlement(sessio
             amount=Decimal("5.00"),
             currency="USD",
             provider_verified=True,
+            report_reference=str(report.id),
         )
         fake_paypal = FakePayPalGateway(capture=capture)
         capture_result = fake_paypal.get_order(order_id=order_id)
         assert capture_result.provider_verified
+        with pytest.raises(InvalidVerifiedPayment):
+            record_verified_capture_and_grant_entitlement(
+                session,
+                _scope(tenant),
+                transaction_id=payment.id,
+                capture=replace(capture_result, report_reference="another-report"),
+            )
         entitlement = record_verified_capture_and_grant_entitlement(
             session,
             _scope(tenant),

@@ -1,8 +1,4 @@
-"""Payment persistence boundary and post-verification entitlement service.
-
-This module intentionally performs no PayPal network calls. A production
-Orders v2 adapter can be injected at the boundary described by ``PayPalGateway``.
-"""
+"""Payment persistence boundary and post-verification entitlement service."""
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -53,6 +49,7 @@ class PayPalCapture:
     amount: Decimal
     currency: str
     provider_verified: bool
+    report_reference: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,11 +62,7 @@ class PayPalWebhookVerification:
 
 
 class PayPalGateway(Protocol):
-    """Interface for future PayPal Orders v2 operations.
-
-    ``get_order`` and ``verify_webhook`` are explicit verification operations;
-    an approval redirect or unverified webhook is not a verified capture.
-    """
+    """Orders v2 operations used by the report payment API."""
 
     def create_order(
         self, *, request_id: str, amount: Decimal, currency: str, report_reference: str,
@@ -77,10 +70,6 @@ class PayPalGateway(Protocol):
     ) -> PayPalOrder: ...
 
     def capture_order(self, *, order_id: str, request_id: str) -> PayPalCapture: ...
-
-    def get_order(self, *, order_id: str) -> PayPalCapture: ...
-
-    def verify_webhook(self, *, headers: dict[str, str], event_body: dict) -> PayPalWebhookVerification: ...
 
 
 def _active_membership(db: Session, scope: TenantScope) -> WorkspaceMembership:
@@ -261,6 +250,7 @@ def record_verified_capture_and_grant_entitlement(
         or capture.capture_status != "COMPLETED"
         or capture.amount != payment.expected_amount
         or capture.currency != payment.currency
+        or capture.report_reference != str(payment.report_id)
         or not capture.capture_id.strip()
     ):
         raise InvalidVerifiedPayment("PayPal capture did not match the verified purchase attempt.")
