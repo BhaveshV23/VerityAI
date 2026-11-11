@@ -14,6 +14,7 @@ from app.api.v1.evidence import router as evidence_router
 from app.api.v1.governance import router as governance_router
 from app.api.v1.reviews import router as reviews_router
 from app.api.v1.report_payments import router as report_payments_router
+from app.api.v1.reports import router as reports_router
 from app.api.v1.submissions import router as submissions_router
 
 app = FastAPI(title="VerityAI API", version="0.1.0")
@@ -40,6 +41,7 @@ app.include_router(knowledge_documents_router)
 app.include_router(submissions_router)
 app.include_router(reviews_router)
 app.include_router(report_payments_router)
+app.include_router(reports_router)
 app.include_router(analysis_router)
 app.include_router(governance_router)
 app.include_router(evidence_router)

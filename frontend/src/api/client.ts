@@ -190,6 +190,62 @@ export type EvidenceUploadPayload = {
   valid_until?: string;
 };
 
+export type ReportPreview = {
+  report_id: string;
+  report_version: number;
+  submission_version_id: string;
+  analysis_run_id: string;
+  generated_at: string;
+  overall_analysis_status: 'Succeeded';
+  executive_summary: string;
+  counts: {
+    claims_analyzed: number;
+    findings: number;
+    supported_findings: number;
+    unverified_findings: number;
+    policy_findings: number;
+  };
+  finding_sample: { category: string; attention_label: string | null; explanation_preview: string }[];
+  is_limited_preview: true;
+};
+
+export type ReportSnapshot = Omit<ReportPreview, 'finding_sample' | 'is_limited_preview'> & {
+  findings: {
+    finding_id: string;
+    category: string;
+    attention_label: string | null;
+    explanation: string;
+    claim: Record<string, unknown> | null;
+    supporting_evidence: Record<string, unknown>[];
+    policy_result: Record<string, unknown> | null;
+  }[];
+  policy_evaluation: Record<string, unknown>;
+  limitations: string[];
+};
+
+export type ReportAccess = {
+  preview: ReportPreview;
+  is_entitled: boolean;
+  report: ReportSnapshot | null;
+};
+
+export type CreateReportPaymentResult = {
+  transaction_id: string;
+  report_id: string;
+  status: string;
+  amount: string;
+  currency: string;
+  paypal_order_id: string | null;
+  approval_url: string | null;
+};
+
+export type CaptureReportPaymentResult = {
+  transaction_id: string;
+  report_id: string;
+  entitlement_id: string;
+  status: string;
+};
+
 const env = (import.meta as ImportMeta & { env: Record<string, string | undefined> }).env;
 const apiBaseUrl = (env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
 
@@ -233,12 +289,17 @@ function identityHeaders(): Record<string, string> {
   return headers;
 }
 
-async function requestJson<TResponse>(path: string, method: 'GET' | 'POST', body?: unknown): Promise<TResponse> {
+async function requestJson<TResponse>(
+  path: string,
+  method: 'GET' | 'POST',
+  body?: unknown,
+  extraHeaders: Record<string, string> = {},
+): Promise<TResponse> {
 
   const response = await fetch(apiUrl(path), {
     method,
     credentials: 'same-origin',
-    headers: tenantHeaders(),
+    headers: { ...tenantHeaders(), ...extraHeaders },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 
@@ -340,6 +401,38 @@ export function getAnalysisFindings(runId: string): Promise<AnalysisFinding[]> {
   return requestJson<AnalysisFinding[]>(
     `${tenantPath()}/analysis-runs/${encodeURIComponent(runId)}/findings`,
     'GET',
+  );
+}
+
+export function createReportSnapshot(versionId: string, runId: string): Promise<{ report_id: string; preview: ReportPreview }> {
+  return requestJson(
+    `${tenantPath()}/submission-versions/${encodeURIComponent(versionId)}/analysis-runs/${encodeURIComponent(runId)}/reports`,
+    'POST',
+  );
+}
+
+export function getReportAccess(reportId: string): Promise<ReportAccess> {
+  return requestJson(`${tenantPath()}/reports/${encodeURIComponent(reportId)}`, 'GET');
+}
+
+export function createReportPayment(
+  reportId: string,
+  returnUrl: string,
+  cancelUrl: string,
+  idempotencyKey: string,
+): Promise<CreateReportPaymentResult> {
+  return requestJson(
+    `${tenantPath()}/reports/${encodeURIComponent(reportId)}/payments`,
+    'POST',
+    { return_url: returnUrl, cancel_url: cancelUrl },
+    { 'Idempotency-Key': idempotencyKey },
+  );
+}
+
+export function captureReportPayment(transactionId: string): Promise<CaptureReportPaymentResult> {
+  return requestJson(
+    `${tenantPath()}/report-payments/${encodeURIComponent(transactionId)}/capture`,
+    'POST',
   );
 }
 

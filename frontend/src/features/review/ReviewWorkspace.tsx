@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import { ApiError, getAnalysisFindings, getAnalysisRuns, getReviewEligibility } from '../../api/client';
+import { ApiError, createReportSnapshot, getAnalysisFindings, getAnalysisRuns, getReviewEligibility } from '../../api/client';
 import type { AnalysisFinding, AnalysisStageResult, ReviewEligibility } from '../../api/client';
 import DocumentViewer from './DocumentViewer';
 import DecisionPanel from './DecisionPanel';
@@ -28,6 +28,8 @@ export default function ReviewWorkspace() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reportId, setReportId] = useState('');
+  const [reportError, setReportError] = useState('');
 
   useEffect(() => {
     let isCurrent = true;
@@ -40,6 +42,8 @@ export default function ReviewWorkspace() {
       setAnalysisState(null);
       setAnalysisStages([]);
       setEligibility(null);
+      setReportId('');
+      setReportError('');
       try {
         const runs = await getAnalysisRuns(versionId);
         const currentEligibility = await getReviewEligibility(versionId);
@@ -57,6 +61,14 @@ export default function ReviewWorkspace() {
         setAnalysisStages(latestRun.stage_results);
         const latestFindings = await getAnalysisFindings(latestRun.id);
         if (isCurrent) setFindings(latestFindings);
+        if (latestRun.overall_state === 'Succeeded') {
+          try {
+            const report = await createReportSnapshot(versionId, latestRun.id);
+            if (isCurrent) setReportId(report.report_id);
+          } catch {
+            if (isCurrent) setReportError('The report preview is not available yet.');
+          }
+        }
       } catch (cause) {
         if (isCurrent) {
           setFindings([]);
@@ -90,6 +102,12 @@ export default function ReviewWorkspace() {
           <Link className="text-link" to="/">← Back to intake</Link>
         </div>
       </div>
+
+      {reportId && <section className="report-entry panel">
+        <div><p className="eyebrow">Analysis complete</p><h2>Your verification report is ready</h2></div>
+        <Link className="button button-primary" to={`/reports/${encodeURIComponent(reportId)}`}>Open report</Link>
+      </section>}
+      {reportError && <p className="inline-error" role="alert">{reportError}</p>}
 
       {extractionStatus && extractionStatus !== 'Not required' && (
         <p className="helper-text" role="status">Document extraction: {extractionStatus}</p>

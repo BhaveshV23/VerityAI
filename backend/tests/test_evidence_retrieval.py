@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select
 from uuid import uuid4
 
@@ -191,6 +191,7 @@ def test_expired_and_inactive_evidence_with_matching_text_remain_ineligible(
 ):
     tenant, _ = tenant_pair
     source = "The annual fee is 2%."
+    utc_today = datetime.now(timezone.utc).date()
     with session_factory() as session:
         for expired, inactive in ((True, False), (False, True)):
             record = EvidenceRecord(
@@ -207,8 +208,8 @@ def test_expired_and_inactive_evidence_with_matching_text_remain_ineligible(
                 session, tenant, record.id, 1,
                 title="Fee schedule",
                 extracted_text=source,
-                valid_from=date.today() - timedelta(days=30),
-                valid_until=date.today() - timedelta(days=1) if expired else date.today() + timedelta(days=30),
+                valid_from=utc_today - timedelta(days=30),
+                valid_until=utc_today - timedelta(days=1) if expired else utc_today + timedelta(days=30),
             )
         run = _submit_and_analyze(session, tenant, source)
         candidates = list(session.scalars(
