@@ -7,12 +7,14 @@ import pytest
 from sqlalchemy import func, select
 
 from app.core.dependencies import get_db, get_tenant_scope
+from app.api.v1.report_payments import get_paypal_gateway
 from app.main import app
 from app.models import (
     AnalysisRun,
     AnalysisStageResult,
     Report,
     ReportEntitlement,
+    PaymentTransaction,
     User,
     WorkspaceMembership,
 )
@@ -24,6 +26,7 @@ from app.modules.reports.payments import (
     create_pending_payment,
     record_verified_capture_and_grant_entitlement,
 )
+from app.modules.reports.paypal import PayPalProviderError
 from app.modules.submissions.services import create_submission_version
 from app.modules.tenancy.schemas import TenantScope
 
@@ -38,7 +41,7 @@ def _scope(tenant, *, user_id=None):
 
 
 @contextmanager
-def _authenticated_client(session_factory, scope):
+def _authenticated_client(session_factory, scope, paypal_gateway=None):
     previous_overrides = app.dependency_overrides.copy()
 
     def override_db():
@@ -47,6 +50,8 @@ def _authenticated_client(session_factory, scope):
 
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_tenant_scope] = lambda: scope
+    if paypal_gateway is not None:
+        app.dependency_overrides[get_paypal_gateway] = lambda: paypal_gateway
     try:
         with TestClient(app) as client:
             yield client
@@ -219,6 +224,43 @@ def test_report_api_rejects_incomplete_or_failed_analysis(
         assert session.scalar(select(func.count(Report.id)).where(
             Report.submission_version_id == version_id,
             Report.analysis_run_id == run_id,
+        )) == 0
+
+
+def test_failed_paypal_order_creation_never_marks_payment_paid_or_grants_entitlement(
+    session_factory, tenant_pair
+):
+    tenant, _ = tenant_pair
+    with session_factory() as session:
+        version_id, run_id = _create_analysis(session, tenant)
+    with _authenticated_client(session_factory, _scope(tenant)) as client:
+        report_response = _create_report(client, tenant, version_id, run_id)
+    assert report_response.status_code == 200
+    report_id = report_response.json()["report_id"]
+
+    class FailingGateway:
+        def create_order(self, **kwargs):
+            raise PayPalProviderError("PayPal rejected the request (HTTP 422).")
+
+        def capture_order(self, **kwargs):
+            raise AssertionError("Capture must not run after order creation failed")
+
+    with _authenticated_client(session_factory, _scope(tenant), FailingGateway()) as client:
+        response = client.post(
+            f"/api/v1/organizations/{tenant.organization_id}/workspaces/{tenant.workspace_id}/reports/{report_id}/payments",
+            headers={"Idempotency-Key": f"failed-order-{uuid4()}"},
+            json={"return_url": "https://verity.example/return", "cancel_url": "https://verity.example/cancel"},
+        )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "PayPal rejected the request (HTTP 422)."
+    with session_factory() as session:
+        payment = session.scalar(select(PaymentTransaction).where(PaymentTransaction.report_id == UUID(report_id)))
+        assert payment is not None
+        assert payment.status == "pending"
+        assert payment.paypal_order_id is None
+        assert session.scalar(select(func.count(ReportEntitlement.id)).where(
+            ReportEntitlement.report_id == UUID(report_id),
         )) == 0
 
 

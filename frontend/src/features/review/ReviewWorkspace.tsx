@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { ApiError, createReportSnapshot, getAnalysisFindings, getAnalysisRuns, getReviewEligibility } from '../../api/client';
 import type { AnalysisFinding, AnalysisStageResult, ReviewEligibility } from '../../api/client';
@@ -12,6 +12,8 @@ type ReviewLocationState = {
   analysisStatus?: 'Running' | 'Succeeded' | 'Incomplete';
   extractionStatus?: 'Not required' | 'Succeeded';
 } | null;
+
+type GeneratedReport = { versionId: string; runId: string; reportId: string };
 
 export default function ReviewWorkspace() {
   const { submissionId = '', versionId = '' } = useParams();
@@ -28,8 +30,14 @@ export default function ReviewWorkspace() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-  const [reportId, setReportId] = useState('');
+  const [report, setReport] = useState<GeneratedReport | null>(null);
   const [reportError, setReportError] = useState('');
+  const reportRef = useRef<GeneratedReport | null>(null);
+
+  function updateReport(value: GeneratedReport | null) {
+    reportRef.current = value;
+    setReport(value);
+  }
 
   useEffect(() => {
     let isCurrent = true;
@@ -42,33 +50,49 @@ export default function ReviewWorkspace() {
       setAnalysisState(null);
       setAnalysisStages([]);
       setEligibility(null);
-      setReportId('');
       setReportError('');
+      if (reportRef.current && reportRef.current.versionId !== versionId) updateReport(null);
       try {
         const runs = await getAnalysisRuns(versionId);
-        const currentEligibility = await getReviewEligibility(versionId);
         if (!isCurrent) return;
-        setEligibility(currentEligibility);
         const latestRun = runs[0];
         if (!latestRun) {
           setFindings([]);
           setAnalysisState(locationState?.analysisStatus ?? null);
+          setEligibility(null);
+          updateReport(null);
           return;
         }
         setRunNumber(latestRun.run_number);
         setAnalysisRunId(latestRun.id);
         setAnalysisState(latestRun.overall_state);
         setAnalysisStages(latestRun.stage_results);
-        const latestFindings = await getAnalysisFindings(latestRun.id);
-        if (isCurrent) setFindings(latestFindings);
-        if (latestRun.overall_state === 'Succeeded') {
+        const existingReport = reportRef.current;
+        const reportAlreadyCreated = existingReport?.versionId === versionId
+          && existingReport.runId === latestRun.id;
+        if (!reportAlreadyCreated) updateReport(null);
+        if (latestRun.overall_state === 'Succeeded' && !reportAlreadyCreated) {
           try {
-            const report = await createReportSnapshot(versionId, latestRun.id);
-            if (isCurrent) setReportId(report.report_id);
-          } catch {
-            if (isCurrent) setReportError('The report preview is not available yet.');
+            const created = await createReportSnapshot(versionId, latestRun.id);
+            if (!created.report_id) throw new Error('The report service did not return a report ID.');
+            if (isCurrent) {
+              updateReport({ versionId, runId: latestRun.id, reportId: created.report_id });
+              setReportError('');
+            }
+          } catch (cause) {
+            if (isCurrent) {
+              setReportError(cause instanceof ApiError
+                ? cause.message
+                : cause instanceof Error
+                  ? cause.message
+                  : 'The report could not be created.');
+            }
           }
         }
+        const currentEligibility = await getReviewEligibility(versionId);
+        if (isCurrent) setEligibility(currentEligibility);
+        const latestFindings = await getAnalysisFindings(latestRun.id);
+        if (isCurrent) setFindings(latestFindings);
       } catch (cause) {
         if (isCurrent) {
           setFindings([]);
@@ -103,11 +127,16 @@ export default function ReviewWorkspace() {
         </div>
       </div>
 
-      {reportId && <section className="report-entry panel">
+      {report && report.versionId === versionId && <section className="report-entry panel">
         <div><p className="eyebrow">Analysis complete</p><h2>Your verification report is ready</h2></div>
-        <Link className="button button-primary" to={`/reports/${encodeURIComponent(reportId)}`}>Open report</Link>
+        <Link className="button button-primary" to={`/reports/${encodeURIComponent(report.reportId)}`}>View report</Link>
       </section>}
-      {reportError && <p className="inline-error" role="alert">{reportError}</p>}
+      {reportError && analysisState === 'Succeeded' && <section className="report-entry panel report-entry-error" role="alert">
+        <p className="inline-error">Report creation failed: {reportError}</p>
+        <button className="button button-secondary" type="button" disabled={isLoading} onClick={() => setRefreshToken((current) => current + 1)}>
+          {isLoading ? 'Retrying…' : 'Retry report creation'}
+        </button>
+      </section>}
 
       {extractionStatus && extractionStatus !== 'Not required' && (
         <p className="helper-text" role="status">Document extraction: {extractionStatus}</p>

@@ -250,7 +250,10 @@ def record_verified_capture_and_grant_entitlement(
         or capture.capture_status != "COMPLETED"
         or capture.amount != payment.expected_amount
         or capture.currency != payment.currency
-        or capture.report_reference != str(payment.report_id)
+        # PayPal may omit optional custom_id from its capture representation.
+        # The stored order ID is already bound to this report; reject a
+        # provider reference when present if it contradicts that binding.
+        or (capture.report_reference is not None and capture.report_reference != str(payment.report_id))
         or not capture.capture_id.strip()
     ):
         raise InvalidVerifiedPayment("PayPal capture did not match the verified purchase attempt.")
