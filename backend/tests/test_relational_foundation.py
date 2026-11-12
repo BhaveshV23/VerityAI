@@ -1,8 +1,11 @@
 from uuid import uuid4
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 import pytest
 from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
+from pathlib import Path
 
 from app.audit.service import AuditTargetNotFound, apply_audited_change, record_event
 from app.db.transactions import transaction
@@ -20,6 +23,8 @@ def _rename_workspace(session, workspace_id):
 def test_fresh_migration_contains_expected_relational_tables(engine):
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
+    migration_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    migration_heads = set(ScriptDirectory.from_config(migration_config).get_heads())
     assert {
         "organizations",
         "workspaces",
@@ -43,9 +48,33 @@ def test_fresh_migration_contains_expected_relational_tables(engine):
         "audit_events",
         "knowledge_documents",
         "knowledge_document_chunks",
+        "report_narrative_artifacts",
     } <= tables
     with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "7ad3a10c8421"
+        applied_revisions = set(connection.scalars(text("SELECT version_num FROM alembic_version")))
+    assert migration_heads
+    assert applied_revisions == migration_heads
+
+    artifact_checks = {
+        constraint["name"] for constraint in inspector.get_check_constraints("report_narrative_artifacts")
+    }
+    # The hand-written migration supplies already table-prefixed names to
+    # op.create_table. Alembic applies the metadata naming convention again,
+    # and PostgreSQL truncates these long identifiers with a stable hash.
+    assert {
+        "ck_report_narrative_artifacts_ck_report_narrative_artif_c543",
+        "ck_report_narrative_artifacts_ck_report_narrative_artif_d753",
+        "ck_report_narrative_artifacts_ck_report_narrative_artif_58cc",
+        "ck_report_narrative_artifacts_ck_report_narrative_artif_0287",
+    } <= artifact_checks
+    artifact_uniques = {
+        constraint["name"] for constraint in inspector.get_unique_constraints("report_narrative_artifacts")
+    }
+    assert "uq_report_narrative_artifacts_report" in artifact_uniques
+    artifact_foreign_keys = {
+        constraint["name"] for constraint in inspector.get_foreign_keys("report_narrative_artifacts")
+    }
+    assert "fk_report_narrative_artifact_report" in artifact_foreign_keys
 
 
 def test_repository_reads_are_limited_to_explicit_tenant_scope(session_factory, tenant_pair):

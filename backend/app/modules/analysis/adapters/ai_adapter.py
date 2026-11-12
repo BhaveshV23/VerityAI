@@ -129,7 +129,7 @@ def _gemini_settings() -> tuple[str, str, int]:
     model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
     if not model:
         raise ClaimExtractionConfigurationError("GEMINI_MODEL must not be empty.")
-    raw_timeout = os.getenv("GEMINI_TIMEOUT_SECONDS", "30").strip()
+    raw_timeout = os.getenv("GEMINI_TIMEOUT_SECONDS", "90").strip()
     try:
         timeout_seconds = int(raw_timeout)
     except ValueError as exc:

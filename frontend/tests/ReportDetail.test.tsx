@@ -2,12 +2,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import ReportDetail from '../src/features/reports/ReportDetail';
-import type { ReportAccess } from '../src/api/client';
+import type { DetailedReportStatus, ReportAccess } from '../src/api/client';
 
 const api = vi.hoisted(() => ({
   getReportAccess: vi.fn(),
   createReportPayment: vi.fn(),
   captureReportPayment: vi.fn(),
+  getDetailedReport: vi.fn(),
+  startDetailedReport: vi.fn(),
+  downloadDetailedReportPdf: vi.fn(),
 }));
 
 vi.mock('../src/api/client', () => ({
@@ -15,6 +18,9 @@ vi.mock('../src/api/client', () => ({
   getReportAccess: api.getReportAccess,
   createReportPayment: api.createReportPayment,
   captureReportPayment: api.captureReportPayment,
+  getDetailedReport: api.getDetailedReport,
+  startDetailedReport: api.startDetailedReport,
+  downloadDetailedReportPdf: api.downloadDetailedReportPdf,
 }));
 
 const preview = {
@@ -38,6 +44,27 @@ const fullReport = {
 
 const unpaid: ReportAccess = { preview, is_entitled: false, report: null };
 const paid: ReportAccess = { preview, is_entitled: true, report: fullReport };
+const detailedContent = {
+  schema_version: '1.0' as const,
+  report_id: 'report-1', report_version: 1,
+  submission_version_id: 'version-1', analysis_run_id: 'run-1',
+  snapshot_generated_at: '2026-11-10T00:00:00Z', generated_at: '2026-11-10T00:01:00Z',
+  organization_name: 'North Org', workspace_name: 'North Workspace', submission_id: 'submission-1',
+  executive_summary: 'Detailed executive summary.', verification_overview: 'Two findings were reviewed.',
+  counts: preview.counts, policy_evaluation: { stage_state: 'Succeeded' }, coverage_limitations: [],
+  claim_analyses: [{
+    finding_id: 'finding-1', claim_description: 'A claim', verification_status: 'Unverified claim',
+    deterministic_explanation: 'The claim needs evidence.', ai_analysis: 'AI explanation for the finding.',
+    ai_limitations: [], supporting_evidence: [], policy_result: null,
+  }],
+  risk_assessment: ['Evidence coverage is limited.'], recommendation_label: 'AI-generated guidance' as const,
+  recommendations: ['Review the source documents.'], methodology: 'Deterministic snapshot plus narrative.',
+  evidence_appendix: [],
+};
+const completedDetailedReport: DetailedReportStatus = {
+  report_id: 'report-1', report_version: 1, status: 'completed',
+  detailed_report: detailedContent, error: null, retryable: false,
+};
 
 function renderReport(path = '/reports/report-1', redirect = vi.fn()) {
   return {
@@ -64,6 +91,12 @@ describe('report payment flow', () => {
     api.captureReportPayment.mockResolvedValue({
       transaction_id: 'transaction-1', report_id: 'report-1', entitlement_id: 'entitlement-1', status: 'capture_verified',
     });
+    api.getDetailedReport.mockResolvedValue({
+      report_id: 'report-1', report_version: 1, status: 'not_started',
+      detailed_report: null, error: null, retryable: false,
+    });
+    api.startDetailedReport.mockResolvedValue(completedDetailedReport);
+    api.downloadDetailedReportPdf.mockResolvedValue(new Blob(['%PDF-test'], { type: 'application/pdf' }));
   });
 
   it('starts checkout with server URLs and redirects to the returned Sandbox approval URL', async () => {
@@ -142,5 +175,50 @@ describe('report payment flow', () => {
     expect(await screen.findByText('Payment: failed/cancelled')).toBeTruthy();
     expect(screen.getByText('Network unavailable')).toBeTruthy();
     expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it('starts detailed report generation only after backend entitlement and renders its response', async () => {
+    api.getReportAccess.mockResolvedValue(paid);
+    renderReport();
+
+    expect(await screen.findByText('AI explanation for the finding.')).toBeTruthy();
+    expect(api.getDetailedReport).toHaveBeenCalledWith('report-1');
+    expect(api.startDetailedReport).toHaveBeenCalledWith('report-1');
+    expect(screen.getByRole('button', { name: 'Download PDF' })).toBeTruthy();
+    expect(screen.getByText('AI-generated guidance')).toBeTruthy();
+  });
+
+  it('restores a previously generated detailed report after refresh without regenerating it', async () => {
+    api.getReportAccess.mockResolvedValue(paid);
+    api.getDetailedReport.mockResolvedValue(completedDetailedReport);
+    renderReport();
+
+    expect(await screen.findByText('AI explanation for the finding.')).toBeTruthy();
+    expect(api.startDetailedReport).not.toHaveBeenCalled();
+  });
+
+  it('shows a generation failure and permits retry', async () => {
+    api.getReportAccess.mockResolvedValue(paid);
+    api.getDetailedReport.mockResolvedValue({
+      report_id: 'report-1', report_version: 1, status: 'not_started',
+      detailed_report: null, error: null, retryable: false,
+    });
+    api.startDetailedReport.mockResolvedValueOnce({
+      report_id: 'report-1', report_version: 1, status: 'failed', detailed_report: null,
+      error: 'Detailed report generation failed. Please retry.', retryable: true,
+    }).mockResolvedValueOnce(completedDetailedReport);
+    renderReport();
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Detailed report generation failed. Please retry.');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry detailed report generation' }));
+    expect(await screen.findByText('AI explanation for the finding.')).toBeTruthy();
+    expect(api.startDetailedReport).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not request a detailed report while entitlement is absent', async () => {
+    renderReport();
+    expect(await screen.findByRole('button', { name: 'Continue to PayPal Sandbox' })).toBeTruthy();
+    expect(api.getDetailedReport).not.toHaveBeenCalled();
+    expect(api.startDetailedReport).not.toHaveBeenCalled();
   });
 });

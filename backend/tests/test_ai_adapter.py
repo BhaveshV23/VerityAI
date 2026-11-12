@@ -51,6 +51,7 @@ def _mock_gemini(monkeypatch, response=None, error=None):
 
 def test_gemini_valid_structured_response_preserves_source_spans(monkeypatch):
     source = "Campaign says:\nEarn 4% APY today!"
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
     client = _mock_gemini(
         monkeypatch,
         response=SimpleNamespace(
@@ -68,7 +69,7 @@ def test_gemini_valid_structured_response_preserves_source_spans(monkeypatch):
         "end_offset": len(source),
         "candidate_kind": "promotional",
     }]
-    assert client.models.kwargs["model"] == "gemini-3.8-flash"
+    assert client.models.kwargs["model"] == "gemini-3.5-flash-lite"
     config = client.models.kwargs["config"].values
     assert config["response_json_schema"] == ai_adapter._gemini_response_json_schema()
     assert "response_schema" not in config

@@ -745,6 +745,48 @@ class Report(Base):
     created_at: Mapped[datetime] = timestamp_column()
 
 
+class ReportNarrativeArtifact(Base):
+    """Idempotent Gemini narrative and private PDF associated with one snapshot."""
+
+    __tablename__ = "report_narrative_artifacts"
+    __table_args__ = (
+        UniqueConstraint("report_id", name="uq_report_narrative_artifacts_report"),
+        ForeignKeyConstraint(
+            ["report_id", "organization_id", "workspace_id"],
+            ["reports.id", "reports.organization_id", "reports.workspace_id"],
+            name="fk_report_narrative_artifact_report",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'generating', 'completed', 'failed')",
+            name="valid_status",
+        ),
+        CheckConstraint("report_version > 0", name="positive_report_version"),
+        CheckConstraint("generation_attempts >= 0", name="nonnegative_generation_attempts"),
+        CheckConstraint(
+            "status != 'completed' OR (content IS NOT NULL AND pdf_storage_key IS NOT NULL AND generated_at IS NOT NULL)",
+            name="completed_artifact_has_report_and_pdf",
+        ),
+        Index("ix_report_narrative_artifacts_tenant_status", "organization_id", "workspace_id", "status"),
+    )
+
+    id: Mapped[UUID] = uuid_column()
+    report_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    organization_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    workspace_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    report_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    content: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    pdf_storage_key: Mapped[str | None] = mapped_column(String(64))
+    generation_error: Mapped[str | None] = mapped_column(String(500))
+    generation_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = timestamp_column()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class PaymentTransaction(Base):
     """One server-priced PayPal Sandbox purchase attempt for a report."""
 

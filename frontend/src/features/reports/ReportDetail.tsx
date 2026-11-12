@@ -5,9 +5,12 @@ import {
   ApiError,
   captureReportPayment,
   createReportPayment,
+  downloadDetailedReportPdf,
+  getDetailedReport,
   getReportAccess,
+  startDetailedReport,
 } from '../../api/client';
-import type { ReportAccess } from '../../api/client';
+import type { DetailedReportStatus, ReportAccess } from '../../api/client';
 
 type PaymentState = 'not purchased' | 'processing' | 'paid' | 'failed/cancelled';
 type Redirect = (url: string) => void;
@@ -62,7 +65,14 @@ export default function ReportDetail({ redirect = (url) => window.location.assig
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState('');
+  const [detailedStatus, setDetailedStatus] = useState<DetailedReportStatus | null>(null);
+  const [detailedError, setDetailedError] = useState('');
+  const [isGeneratingDetailed, setIsGeneratingDetailed] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState('');
   const operationInProgress = useRef(false);
+  const detailedOperationInProgress = useRef(false);
+  const detailedAutoStartedFor = useRef('');
   const callbackHandled = useRef(false);
   const loadedReportId = useRef('');
 
@@ -103,6 +113,82 @@ export default function ReportDetail({ redirect = (url) => window.location.assig
       operationInProgress.current = false;
     }
   }, [refreshAccess, reportId, savePaymentState]);
+
+  const runDetailedReport = useCallback(async (retry = false) => {
+    if (detailedOperationInProgress.current) return;
+    detailedOperationInProgress.current = true;
+    setIsGeneratingDetailed(true);
+    setDetailedError('');
+    setDetailedStatus((previous) => previous ?? {
+      report_id: reportId, report_version: access?.report?.report_version ?? 1,
+      status: 'generating', detailed_report: null, error: null, retryable: false,
+    });
+    try {
+      let current = retry ? await startDetailedReport(reportId) : await getDetailedReport(reportId);
+      if (current.report_id !== reportId || current.report_version !== access?.report?.report_version) {
+        throw new Error('The detailed report response did not match this verified report snapshot.');
+      }
+      if (current.status === 'not_started') {
+        current = await startDetailedReport(reportId);
+        if (current.report_id !== reportId || current.report_version !== access?.report?.report_version) {
+          throw new Error('The detailed report response did not match this verified report snapshot.');
+        }
+      }
+      let attempts = 0;
+      while ((current.status === 'pending' || current.status === 'generating') && attempts < 80) {
+        setDetailedStatus(current);
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        current = await getDetailedReport(reportId);
+        if (current.report_id !== reportId || current.report_version !== access?.report?.report_version) {
+          throw new Error('The detailed report response did not match this verified report snapshot.');
+        }
+        attempts += 1;
+      }
+      if (current.status === 'completed' && !current.detailed_report) {
+        throw new Error('The completed detailed report is unavailable.');
+      }
+      setDetailedStatus(current);
+      if (current.status === 'failed') setDetailedError(current.error ?? 'Detailed report generation failed. Please retry.');
+      if (current.status === 'pending' || current.status === 'generating') {
+        setDetailedError('Generation is still in progress. Check this report again shortly.');
+      }
+    } catch (cause) {
+      setDetailedError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : 'The detailed report is temporarily unavailable.');
+      setDetailedStatus({
+        report_id: reportId,
+        report_version: access?.report?.report_version ?? 1,
+        status: 'failed', detailed_report: null, error: null, retryable: true,
+      });
+    } finally {
+      setIsGeneratingDetailed(false);
+      detailedOperationInProgress.current = false;
+    }
+  }, [access?.report?.report_version, reportId]);
+
+  useEffect(() => {
+    if (!access?.is_entitled || !access.report || detailedAutoStartedFor.current === reportId) return;
+    detailedAutoStartedFor.current = reportId;
+    void runDetailedReport();
+  }, [access?.is_entitled, access?.report, reportId, runDetailedReport]);
+
+  async function downloadPdf() {
+    if (isDownloadingPdf || detailedStatus?.status !== 'completed') return;
+    setIsDownloadingPdf(true);
+    setPdfError('');
+    try {
+      const file = await downloadDetailedReportPdf(reportId);
+      const objectUrl = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = 'verityai-detailed-report.pdf';
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (cause) {
+      setPdfError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : 'The PDF could not be downloaded.');
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  }
 
   useEffect(() => {
     let current = true;
@@ -247,6 +333,66 @@ export default function ReportDetail({ redirect = (url) => window.location.assig
               Retry payment confirmation
             </button>
           )}
+        </section>}
+
+        {access.is_entitled && access.report && <section className="report-panel report-full" aria-labelledby="detailed-report-heading">
+          <div className="report-panel-heading">
+            <div><p className="eyebrow">Paid detailed report</p><h2 id="detailed-report-heading">Detailed verification report</h2></div>
+            {detailedStatus?.status === 'completed' && <button className="button button-secondary" type="button" onClick={() => void downloadPdf()} disabled={isDownloadingPdf}>
+              {isDownloadingPdf ? 'Preparing PDF…' : 'Download PDF'}
+            </button>}
+          </div>
+          {isGeneratingDetailed && <p role="status">Generating the detailed report and PDF…</p>}
+          {detailedError && <p className="inline-error" role="alert">{detailedError}</p>}
+          {pdfError && <p className="inline-error" role="alert">{pdfError}</p>}
+          {detailedStatus?.status === 'failed' && <button className="button button-secondary" type="button" onClick={() => void runDetailedReport(true)} disabled={isGeneratingDetailed}>
+            Retry detailed report generation
+          </button>}
+          {detailedStatus?.status === 'completed' && detailedStatus.detailed_report && <>
+            <p className="helper-text">{detailedStatus.detailed_report.organization_name} · {detailedStatus.detailed_report.workspace_name} · Submission {detailedStatus.detailed_report.submission_id}</p>
+            <h3>Executive Summary</h3>
+            <p>{detailedStatus.detailed_report.executive_summary}</p>
+
+            <h3>Verification Overview</h3>
+            <p>{detailedStatus.detailed_report.verification_overview}</p>
+            <dl className="report-counts">
+              <div><dt>Claims reviewed</dt><dd>{detailedStatus.detailed_report.counts.claims_analyzed}</dd></div>
+              <div><dt>Findings</dt><dd>{detailedStatus.detailed_report.counts.findings}</dd></div>
+              <div><dt>Supported</dt><dd>{detailedStatus.detailed_report.counts.supported_findings}</dd></div>
+              <div><dt>Unverified</dt><dd>{detailedStatus.detailed_report.counts.unverified_findings}</dd></div>
+              <div><dt>Policy findings</dt><dd>{detailedStatus.detailed_report.counts.policy_findings}</dd></div>
+            </dl>
+            {detailedStatus.detailed_report.coverage_limitations.map((item, index) => <p className="helper-text" key={`coverage-${index}`}>{item}</p>)}
+
+            <h3>Detailed Claim-by-Claim Analysis</h3>
+            {detailedStatus.detailed_report.claim_analyses.map((finding) => <article className="report-full-finding" key={finding.finding_id}>
+              <div className="report-panel-heading"><h4>{finding.claim_description}</h4><span className="preview-tag">{finding.verification_status}</span></div>
+              <p><strong>Verified finding:</strong> {finding.deterministic_explanation}</p>
+              <p><strong>AI-assisted explanation:</strong> {finding.ai_analysis}</p>
+              {finding.ai_limitations.map((item, index) => <p className="helper-text" key={`${finding.finding_id}-limitation-${index}`}>{item}</p>)}
+              {finding.supporting_evidence.length > 0 && <details><summary>Evidence references</summary><pre>{JSON.stringify(finding.supporting_evidence, null, 2)}</pre></details>}
+              {finding.policy_result && <details><summary>Policy result</summary><pre>{JSON.stringify(finding.policy_result, null, 2)}</pre></details>}
+            </article>)}
+
+            <h3>Risk and Compliance Assessment</h3>
+            {detailedStatus.detailed_report.risk_assessment.length
+              ? <ul>{detailedStatus.detailed_report.risk_assessment.map((item, index) => <li key={`risk-${index}`}>{item}</li>)}</ul>
+              : <p>No additional narrative risks were generated from the saved findings.</p>}
+            <h3>Recommendations</h3>
+            <p className="eyebrow">{detailedStatus.detailed_report.recommendation_label}</p>
+            {detailedStatus.detailed_report.recommendations.length
+              ? <ul>{detailedStatus.detailed_report.recommendations.map((item, index) => <li key={`recommendation-${index}`}>{item}</li>)}</ul>
+              : <p>No recommendations were generated.</p>}
+            <h3>Methodology</h3>
+            <p>{detailedStatus.detailed_report.methodology}</p>
+            <details><summary>Evidence and limitations appendix</summary>
+              <pre>{JSON.stringify({
+                policy_evaluation: detailedStatus.detailed_report.policy_evaluation,
+                evidence_appendix: detailedStatus.detailed_report.evidence_appendix,
+                limitations: detailedStatus.detailed_report.coverage_limitations,
+              }, null, 2)}</pre>
+            </details>
+          </>}
         </section>}
 
         {access.is_entitled && access.report && <section className="report-panel report-full" aria-labelledby="full-report-heading">

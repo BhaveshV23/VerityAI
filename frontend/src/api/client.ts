@@ -229,6 +229,48 @@ export type ReportAccess = {
   report: ReportSnapshot | null;
 };
 
+export type DetailedReport = {
+  schema_version: '1.0';
+  report_id: string;
+  report_version: number;
+  submission_version_id: string;
+  analysis_run_id: string;
+  snapshot_generated_at: string;
+  generated_at: string;
+  organization_name: string;
+  workspace_name: string;
+  submission_id: string;
+  executive_summary: string;
+  verification_overview: string;
+  counts: ReportPreview['counts'];
+  policy_evaluation: Record<string, unknown>;
+  coverage_limitations: string[];
+  claim_analyses: {
+    finding_id: string;
+    claim_description: string;
+    verification_status: string;
+    deterministic_explanation: string;
+    ai_analysis: string;
+    ai_limitations: string[];
+    supporting_evidence: Record<string, unknown>[];
+    policy_result: Record<string, unknown> | null;
+  }[];
+  risk_assessment: string[];
+  recommendation_label: 'AI-generated guidance';
+  recommendations: string[];
+  methodology: string;
+  evidence_appendix: Record<string, unknown>[];
+};
+
+export type DetailedReportStatus = {
+  report_id: string;
+  report_version: number;
+  status: 'not_started' | 'pending' | 'generating' | 'completed' | 'failed';
+  detailed_report: DetailedReport | null;
+  error: string | null;
+  retryable: boolean;
+};
+
 export type CreateReportPaymentResult = {
   transaction_id: string;
   report_id: string;
@@ -413,6 +455,34 @@ export function createReportSnapshot(versionId: string, runId: string): Promise<
 
 export function getReportAccess(reportId: string): Promise<ReportAccess> {
   return requestJson(`${tenantPath()}/reports/${encodeURIComponent(reportId)}`, 'GET');
+}
+
+export function getDetailedReport(reportId: string): Promise<DetailedReportStatus> {
+  return requestJson(`${tenantPath()}/reports/${encodeURIComponent(reportId)}/detailed-report`, 'GET');
+}
+
+export function startDetailedReport(reportId: string): Promise<DetailedReportStatus> {
+  return requestJson(`${tenantPath()}/reports/${encodeURIComponent(reportId)}/detailed-report`, 'POST');
+}
+
+export async function downloadDetailedReportPdf(reportId: string): Promise<Blob> {
+  const response = await fetch(apiUrl(
+    `${tenantPath()}/reports/${encodeURIComponent(reportId)}/detailed-report/pdf`,
+  ), {
+    method: 'GET',
+    credentials: 'same-origin',
+    headers: identityHeaders(),
+  });
+  if (!response.ok) {
+    let message = `Request failed (${response.status}).`;
+    try {
+      const payload = (await response.json()) as { detail?: { error?: { message?: string } } | string };
+      if (typeof payload.detail === 'string') message = payload.detail;
+      else if (payload.detail?.error?.message) message = payload.detail.error.message;
+    } catch { /* Keep the HTTP status message when the response is not JSON. */ }
+    throw new ApiError(message, response.status);
+  }
+  return response.blob();
 }
 
 export function createReportPayment(
